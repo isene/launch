@@ -1,0 +1,18 @@
+[package]
+name = "launch"
+version = "0.1.0"
+edition = "2021"
+description = "Your everyday helpers and every program on the PATH in one window, found as you type"
+license = "Unlicense"
+repository = "https://github.com/isene/launch"
+authors = ["Geir Isene <g@isene.com>"]
+
+[dependencies]
+crust = { version = "0.1", path = "../crust", package = "fe2o3-crust" }
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

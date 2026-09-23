@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <radialGradient id="back" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" style="stop-color:#23202b"/>
+      <stop offset="100%" style="stop-color:#0a0910"/>
+    </radialGradient>
+  </defs>
+  <circle cx="128" cy="128" r="124" fill="url(#back)"/>
+
+  <!-- three chevrons rising, the lowest faintest, like something taking off -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="16">
+    <path d="M78 188 L128 150 L178 188" stroke="#f74c00" opacity="0.4"/>
+    <path d="M78 146 L128 108 L178 146" stroke="#f74c00" opacity="0.7"/>
+    <path d="M78 104 L128 66 L178 104" stroke="#ffb066"/>
+  </g>
+
+  <circle cx="128" cy="128" r="124" fill="none" stroke="#f74c00" stroke-width="3" stroke-opacity=".9"/>
+  <circle cx="128" cy="128" r="118" fill="none" stroke="#ffb066" stroke-width="1" stroke-opacity=".5"/>
+</svg>
