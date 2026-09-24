@@ -49,7 +49,6 @@ A blank line starts a new group. A group never splits across two columns.
 
 A program that needs a terminal opens in a new glass. launch decides on Enter: a menu entry (`.desktop`) that says `Terminal=true` or `false` settles it. Otherwise a script runs on its own, as does a program linked to a window system library. Everything else gets a glass.
 
-
 launch reads the list that the [bare](https://github.com/isene/bare) shell keeps in `~/.bare_exe_cache`, so it never walks the PATH itself. Without that file it looks through the PATH once.
 
 ## A password prompt
