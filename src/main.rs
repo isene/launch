@@ -145,7 +145,14 @@ impl Launch {
                     }
                     let first = cmd.split_whitespace().next().unwrap_or("");
                     if needs_terminal(first) != self.swap {
-                        return Some(format!("glass -- /bin/sh -c {}", sh_quote(&format!("exec {cmd}"))));
+                        // The window is named after the program: sh prints
+                        // the title (handed in as $0) before it starts it.
+                        let name = first.rsplit('/').next().unwrap_or(first);
+                        return Some(format!(
+                            "glass -- /bin/sh -c {} {}",
+                            sh_quote(&format!("printf %s \"$0\"; exec {cmd}")),
+                            sh_quote(&style::title_seq(name))
+                        ));
                     }
                     return Some(cmd);
                 }
