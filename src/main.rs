@@ -60,6 +60,8 @@ struct Launch {
     hits: Vec<usize>,
     spots: Vec<Spot>,
     sel: usize,
+    /// Ctrl-t: the next program goes the other way (into a glass, or not).
+    swap: bool,
 }
 
 fn main() {
@@ -107,7 +109,7 @@ fn main() {
     let text = fs::read_to_string(home.join(".launch")).unwrap_or_default();
     let helpers = parse_helpers(&text);
     let lit = vec![true; helpers.len()];
-    let mut l = Launch { helpers, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0 };
+    let mut l = Launch { helpers, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0, swap: false };
 
     let pid_file = runtime_dir().join("launch.pid");
     let _ = fs::write(&pid_file, std::process::id().to_string());
@@ -131,17 +133,23 @@ impl Launch {
             match key.as_str() {
                 "ESC" | "F12" => return None,
                 "ENTER" => {
-                    if let Some(spot) = self.spots.get(self.sel) {
-                        return Some(match spot.item {
-                            Item::Helper(i) => self.helpers[i].cmd.clone(),
-                            Item::Prog(i) => self.progs[i].clone(),
-                        });
+                    // A helper runs as written. A program, or a typed
+                    // command, goes into a glass when it needs a terminal.
+                    let cmd = match self.spots.get(self.sel).map(|s| s.item) {
+                        Some(Item::Helper(i)) => return Some(self.helpers[i].cmd.clone()),
+                        Some(Item::Prog(i)) => self.progs[i].clone(),
+                        None => self.query.trim().to_string(),
+                    };
+                    if cmd.is_empty() {
+                        continue;
                     }
-                    let typed = self.query.trim();
-                    if !typed.is_empty() {
-                        return Some(typed.to_string());
+                    let first = cmd.split_whitespace().next().unwrap_or("");
+                    if needs_terminal(first) != self.swap {
+                        return Some(format!("glass -- /bin/sh -c {}", sh_quote(&format!("exec {cmd}"))));
                     }
+                    return Some(cmd);
                 }
+                "C-T" => self.swap = !self.swap,
                 "DOWN" | "TAB" => {
                     if self.sel + 1 < self.spots.len() {
                         self.sel += 1;
@@ -289,8 +297,10 @@ impl Launch {
         }
 
         // The bar along the bottom, the version at the far right.
-        let foot = if self.query.trim().is_empty() {
-            "type to search · arrows move · Enter run · Esc close".to_string()
+        let foot = if self.swap {
+            "Ctrl-t: the next program goes the other way (into a glass, or out of one)".to_string()
+        } else if self.query.trim().is_empty() {
+            "type to search · arrows move · Enter run · Ctrl-t swap glass · Esc close".to_string()
         } else {
             let n = self.lit.iter().filter(|&&l| l).count();
             format!("{n} helpers and {} programs match", self.hits.len())
@@ -431,6 +441,74 @@ fn balance(sizes: &[usize], ncols: usize) -> Vec<Vec<usize>> {
         }
         target += 1;
     }
+}
+
+/// Does this program want a terminal? Asked only on Enter.
+/// - glass itself never goes inside a glass.
+/// - A menu entry (.desktop) says so with Terminal=true or false.
+/// - A script is taken as a one-shot action, so it runs on its own.
+/// - A binary linked to a window system library draws its own window.
+/// - Anything else is a terminal program.
+fn needs_terminal(name: &str) -> bool {
+    if name.is_empty() || name == "glass" {
+        return false;
+    }
+    let Some(path) = find_in_path(name) else { return false };
+    let real = fs::canonicalize(&path).unwrap_or(path.clone());
+    let base = real.file_name().map(|b| b.to_string_lossy().into_owned()).unwrap_or_default();
+    if let Some(t) = desktop_terminal(&[name, &base]) {
+        return t;
+    }
+    let Ok(bytes) = fs::read(&real) else { return false };
+    if bytes.starts_with(b"#!") || !bytes.starts_with(b"\x7fELF") {
+        return false;
+    }
+    // Library names all start with "lib": stop only there, then compare.
+    const GUI: [&[u8]; 8] = [b"X11.so", b"xcb.so", b"gtk", b"gdk", b"wayland-client.so", b"Qt", b"SDL", b"EGL.so"];
+    let mut rest = &bytes[..];
+    while let Some(i) = rest.windows(3).position(|w| w == b"lib") {
+        let after = &rest[i + 3..];
+        if GUI.iter().any(|g| after.starts_with(g)) {
+            return false;
+        }
+        rest = after;
+    }
+    true
+}
+
+/// Terminal=true or false from the first menu entry whose Exec runs one
+/// of these names, or None when no entry does.
+fn desktop_terminal(names: &[&str]) -> Option<bool> {
+    let dirs = [home().join(".local/share/applications"), PathBuf::from("/usr/share/applications")];
+    for dir in dirs {
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            if e.path().extension().is_none_or(|x| x != "desktop") {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(e.path()) else { continue };
+            let exec = text.lines().find_map(|l| l.strip_prefix("Exec=")).unwrap_or("");
+            let prog = exec.split_whitespace().next().unwrap_or("");
+            let prog = prog.rsplit('/').next().unwrap_or(prog);
+            if names.contains(&prog) {
+                return Some(text.lines().any(|l| l.trim() == "Terminal=true"));
+            }
+        }
+    }
+    None
+}
+
+fn find_in_path(name: &str) -> Option<PathBuf> {
+    if name.contains('/') {
+        return Some(PathBuf::from(name));
+    }
+    let path = std::env::var("PATH").unwrap_or_default();
+    path.split(':').map(|d| PathBuf::from(d).join(name)).find(|p| p.is_file())
+}
+
+/// One word for sh, whatever it holds.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Start `cmd` in a session of its own, so it outlives this window.
@@ -583,6 +661,18 @@ mod tests {
         let p: Vec<String> = ["xgimp", "gimp-2.10", "gimp", "other"].iter().map(|s| s.to_string()).collect();
         let hits: Vec<&str> = find(&p, "gimp").iter().map(|&i| p[i].as_str()).collect();
         assert_eq!(hits, ["gimp", "gimp-2.10", "xgimp"]);
+    }
+
+    #[test]
+    fn a_quoted_word_survives_sh() {
+        let out = Command::new("sh").arg("-c").arg(format!("printf %s {}", sh_quote("it's a \"test\" $HOME"))).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "it's a \"test\" $HOME");
+    }
+
+    #[test]
+    fn glass_and_unknown_names_run_on_their_own() {
+        assert!(!needs_terminal("glass"));
+        assert!(!needs_terminal("no-such-program-here"));
     }
 
     #[test]

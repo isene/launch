@@ -25,6 +25,7 @@ From a key binding it opens its own [glass](https://github.com/isene/glass) wind
 | type | Filter the helpers and the programs at once |
 | arrows, `Tab` | Move; left and right jump between columns |
 | `Enter` | Run the one under the cursor, or what you typed |
+| `Ctrl-t` | Send the next program the other way: into a glass, or out of one |
 | `Ctrl-w` `Ctrl-u` | Delete a word, or all of it |
 | `Esc` | Close |
 
@@ -45,6 +46,9 @@ Bluetooth Off = rfkill block bluetooth
 A blank line starts a new group. A group never splits across two columns.
 
 ## Programs
+
+A program that needs a terminal opens in a new glass. launch decides on Enter: a menu entry (`.desktop`) that says `Terminal=true` or `false` settles it. Otherwise a script runs on its own, as does a program linked to a window system library. Everything else gets a glass.
+
 
 launch reads the list that the [bare](https://github.com/isene/bare) shell keeps in `~/.bare_exe_cache`, so it never walks the PATH itself. Without that file it looks through the PATH once.
 
