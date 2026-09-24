@@ -434,9 +434,22 @@ fn balance(sizes: &[usize], ncols: usize) -> Vec<Vec<usize>> {
 }
 
 /// Start `cmd` in a session of its own, so it outlives this window.
+/// It waits until this window's glass is gone (a second at most): a
+/// glass started while another one closes hangs before it opens.
 fn run_detached(cmd: &str, home: &std::path::Path) {
+    let glass = std::os::unix::process::parent_id();
+    let is_glass = fs::read_to_string(format!("/proc/{glass}/comm")).is_ok_and(|c| c.trim() == "glass");
+    let script = if is_glass {
+        // Gone, or a zombie (Z) that tile has not reaped yet.
+        format!(
+            "i=0; while read -r _ _ s _ < /proc/{glass}/stat 2>/dev/null && [ \"$s\" != Z ] && [ $i -lt 50 ]; \
+             do sleep 0.02; i=$((i+1)); done; {cmd}"
+        )
+    } else {
+        cmd.to_string()
+    };
     let mut c = Command::new("sh");
-    c.arg("-c").arg(cmd).current_dir(home).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    c.arg("-c").arg(script).current_dir(home).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     // SAFETY: setsid is async-signal-safe, as pre_exec requires.
     unsafe {
         c.pre_exec(|| {
