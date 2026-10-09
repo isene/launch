@@ -6,7 +6,7 @@
 
 ![Rust](https://img.shields.io/badge/language-Rust-orange) ![Unlicense](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
 
-The top half is your own list: volume, brightness, Bluetooth, the apps you open every day. It spreads across the window in columns. Below a line sits a search field, and under it every program whose name holds what you type. Part of the [Fe₂O₃ Rust terminal suite](https://github.com/isene/fe2o3).
+The top half is your own list: volume, brightness, Bluetooth, the apps you open every day. It spreads across the window in columns. Below a line sits a search field, and under it every program whose name has what you type. Part of the [Fe₂O₃ Rust terminal suite](https://github.com/isene/fe2o3).
 
 It replaces rofi and a menu script in one.
 
@@ -25,6 +25,7 @@ From a key binding it opens its own [glass](https://github.com/isene/glass) wind
 | type | Filter the helpers and the programs at once |
 | arrows, `Tab` | Move; left and right jump between columns |
 | `Enter` | Run the one under the cursor, or what you typed |
+| `2 3 +` | A sum: the answer shows under the field, and `Enter` copies it |
 | `Ctrl-t` | Send the next program the other way: into a glass, or out of one |
 | `Ctrl-w` `Ctrl-u` | Delete a word, or all of it |
 | `Esc` | Close |
@@ -33,7 +34,7 @@ Type `vol` and only Volume Up and Volume Down stay lit above. Type `gimp` and GI
 
 ## Your helpers
 
-`~/.launch` holds them, one per line. The key in brackets is only shown, as a reminder:
+`~/.launch` lists them, one per line. The key in brackets is only shown, as a reminder:
 
 ```
 Mute On [Ctrl+F1] = wpctl set-mute @DEFAULT_AUDIO_SINK@ 1
@@ -50,6 +51,13 @@ A blank line starts a new group. A group never splits across two columns.
 A program that needs a terminal opens in a new glass. launch decides on Enter: a menu entry (`.desktop`) that says `Terminal=true` or `false` settles it. Otherwise a script runs on its own, as does a program linked to a window system library. Everything else gets a glass.
 
 launch reads the list that the [bare](https://github.com/isene/bare) shell keeps in `~/.bare_exe_cache`, so it never walks the PATH itself. Without that file it looks through the PATH once.
+
+## A sum
+
+Type a sum the way [rpnx](https://github.com/isene/rpnx) takes it, numbers first and then what to do with them: `2 3 +`, `1200 1.25 *`, `2 sqrt`, `45 sin`.
+The answer shows under the field as you type. `Enter` puts it on the clipboard (through `xclip`), ready to paste.
+
+The rpnx engine works it out, so every rpnx command is at hand. A line counts as a sum when it starts with a number and has more to it.
 
 ## A password prompt
 

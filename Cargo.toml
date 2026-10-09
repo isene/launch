@@ -1,6 +1,6 @@
 [package]
 name = "launch"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Your everyday helpers and every program on the PATH in one window, found as you type"
 license = "Unlicense"
@@ -10,6 +10,8 @@ authors = ["Geir Isene <g@isene.com>"]
 [dependencies]
 crust = { version = "0.1", path = "../crust", package = "fe2o3-crust" }
 libc = "0.2"
+# The calculator line: a typed sum is worked out by the rpnx engine.
+rpnx-core = { version = "0.1", path = "../rpnx-core", package = "fe2o3-rpnx-core" }
 
 [profile.release]
 opt-level = 3

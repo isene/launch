@@ -6,6 +6,9 @@
 //! programs whose names hold what you type. One input filters both
 //! halves, and Enter runs the one under the cursor.
 //!
+//! A sum typed the rpnx way (`2 3 +`) shows its answer under the field,
+//! and Enter puts the answer on the clipboard.
+//!
 //! Run from a key binding, with no terminal around it, launch opens its
 //! own glass window; pressed again while open, it closes it.
 
@@ -62,6 +65,8 @@ struct Launch {
     sel: usize,
     /// Ctrl-t: the next program goes the other way (into a glass, or not).
     swap: bool,
+    /// What the query comes to, when it is a sum.
+    answer: Option<String>,
 }
 
 fn main() {
@@ -80,6 +85,7 @@ fn main() {
             println!("  type        filter the helpers and the programs");
             println!("  arrows Tab  move");
             println!("  Enter       run the one under the cursor, or what you typed");
+            println!("  2 3 +       a sum, the rpnx way: the answer shows, Enter copies it");
             println!("  Esc         close");
             println!();
             println!("  ~/.launch holds the helpers, one per line:");
@@ -109,7 +115,7 @@ fn main() {
     let text = fs::read_to_string(home.join(".launch")).unwrap_or_default();
     let helpers = parse_helpers(&text);
     let lit = vec![true; helpers.len()];
-    let mut l = Launch { helpers, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0, swap: false };
+    let mut l = Launch { helpers, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0, swap: false, answer: None };
 
     let pid_file = runtime_dir().join("launch.pid");
     let _ = fs::write(&pid_file, std::process::id().to_string());
@@ -138,7 +144,10 @@ impl Launch {
                     let cmd = match self.spots.get(self.sel).map(|s| s.item) {
                         Some(Item::Helper(i)) => return Some(self.helpers[i].cmd.clone()),
                         Some(Item::Prog(i)) => self.progs[i].clone(),
-                        None => self.query.trim().to_string(),
+                        None => match &self.answer {
+                            Some(a) => return Some(copy_cmd(a)),
+                            None => self.query.trim().to_string(),
+                        },
                     };
                     if cmd.is_empty() {
                         continue;
@@ -211,6 +220,7 @@ impl Launch {
         let q = self.query.trim().to_lowercase();
         self.lit = self.helpers.iter().map(|h| q.is_empty() || h.name.to_lowercase().contains(&q)).collect();
         self.hits = find(&self.progs, &q);
+        self.answer = sum(&q).map(tidy);
         self.sel = 0;
     }
 
@@ -285,6 +295,13 @@ impl Launch {
         if self.query.trim().is_empty() {
             let say = format!("type to search {} programs", self.progs.len());
             out.push_str(&format!("{}{}", Cursor::at(5, top as u16), style::rgb(&say, Some(DIM_RGB), None, "i")));
+        } else if let (Some(a), true) = (&self.answer, self.hits.is_empty()) {
+            out.push_str(&format!(
+                "{}{} {}",
+                Cursor::at(5, top as u16),
+                style::rgb("=", Some(RUST_RGB), None, "b"),
+                style::rgb(a, Some(TEXT_RGB), None, "b")
+            ));
         } else if self.hits.is_empty() {
             let say = "no program by that name; Enter runs what you typed";
             out.push_str(&format!("{}{}", Cursor::at(5, top as u16), style::rgb(say, Some(DIM_RGB), None, "i")));
@@ -308,6 +325,8 @@ impl Launch {
             "Ctrl-t: the next program goes the other way (into a glass, or out of one)".to_string()
         } else if self.query.trim().is_empty() {
             "type to search · arrows move · Enter run · Ctrl-t swap glass · Esc close".to_string()
+        } else if self.answer.is_some() && self.spots.is_empty() {
+            "a sum, worked out by rpnx · Enter copies the answer · Esc close".to_string()
         } else {
             let n = self.lit.iter().filter(|&&l| l).count();
             format!("{n} helpers and {} programs match", self.hits.len())
@@ -327,6 +346,49 @@ impl Launch {
         print!("{out}");
         std::io::stdout().flush().ok();
     }
+}
+
+/// What `line` comes to when it is a sum the rpnx way: numbers and
+/// commands with spaces between, a number first (`2 3 +`, `45 sin`).
+/// The rpnx engine does the work, so every command it knows is here.
+fn sum(line: &str) -> Option<f64> {
+    let first = line.split_whitespace().next()?;
+    let digits = first.trim_start_matches(['-', '+']);
+    if !digits.starts_with(|c: char| c.is_ascii_digit() || c == '.') || line.split_whitespace().count() < 2 {
+        return None;
+    }
+    let mut s = rpnx_core::new_state();
+    for word in line.split_whitespace() {
+        if let Ok(n) = word.parse::<f64>() {
+            rpnx_core::lift_stack(&mut s);
+            s.x = n;
+            continue;
+        }
+        let step = rpnx_core::execute(s, word.to_string());
+        if step.error.is_some() {
+            return None;
+        }
+        s = step.state;
+    }
+    s.x.is_finite().then_some(s.x)
+}
+
+/// A number as one would write it: ten decimals at most, no zeros at
+/// the end, powers of ten for the very big and the very small.
+fn tidy(x: f64) -> String {
+    if x != 0.0 && !(1e-6..1e15).contains(&x.abs()) {
+        return format!("{x:e}");
+    }
+    let s = format!("{x:.10}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" { "0".into() } else { s.into() }
+}
+
+/// The shell line that puts `text` on both selections. xclip stays
+/// behind as their owner after this window is gone.
+fn copy_cmd(text: &str) -> String {
+    let t = sh_quote(text);
+    format!("printf %s {t} | xclip -selection clipboard; printf %s {t} | xclip -selection primary")
 }
 
 /// One helper: its name, then its key dim beside it.
@@ -661,6 +723,30 @@ mod tests {
         assert_eq!((h[0].name.as_str(), h[0].hot.as_str(), h[0].cmd.as_str()), ("Mute", "Ctrl+F1", "wpctl a"));
         assert_eq!((h[1].hot.as_str(), h[1].cmd.as_str(), h[1].group), ("", "b || c", 0));
         assert_eq!(h[2].group, 1);
+    }
+
+    #[test]
+    fn a_sum_is_worked_out_and_a_name_is_left_alone() {
+        let says = |line: &str| sum(line).map(tidy);
+        assert_eq!(says("2 3 +").as_deref(), Some("5"));
+        assert_eq!(says("2 3 4 * +").as_deref(), Some("14"));
+        assert_eq!(says("10 3 /").as_deref(), Some("3.3333333333"));
+        assert_eq!(says("0.1 0.2 +").as_deref(), Some("0.3"));
+        assert_eq!(says("-2 3 *").as_deref(), Some("-6"));
+        assert_eq!(says("2 sqrt 2 *").as_deref(), Some("2.8284271247"));
+        assert_eq!(says("1e20 10 *").as_deref(), Some("1e21"));
+        // Not a sum: a name, a lone number, a word the engine does not
+        // know, and a sum with no answer.
+        for line in ["gimp", "2048", "7z a", "2 3 frobnicate", "1 0 /", "sin 2"] {
+            assert_eq!(says(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn the_answer_goes_to_both_selections() {
+        let cmd = copy_cmd("3.5");
+        assert_eq!(cmd.matches("printf %s '3.5' | xclip -selection").count(), 2);
+        assert!(cmd.contains("clipboard") && cmd.contains("primary"));
     }
 
     #[test]
