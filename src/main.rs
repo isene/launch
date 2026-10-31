@@ -42,6 +42,9 @@ struct Look {
     pick_bg: Rgb,
     /// A bar down the left side, joined to the top bar (the LCARS view).
     side: Option<Rgb>,
+    /// A strand of Matrix code down the left side, in this colour and
+    /// darker towards the top (the matrix view).
+    side_glyphs: Option<Rgb>,
 }
 
 const PLAIN: Look = Look {
@@ -58,6 +61,7 @@ const PLAIN: Look = Look {
     pick_fg: (225, 225, 230),
     pick_bg: (52, 48, 60),
     side: None,
+    side_glyphs: None,
 };
 
 impl Look {
@@ -84,11 +88,21 @@ impl Look {
                 "pick_fg" => k.pick_fg = c,
                 "pick_bg" => k.pick_bg = c,
                 "side" => k.side = Some(c),
+                "side_glyphs" => k.side_glyphs = Some(c),
                 _ => {}
             }
         }
         k
     }
+}
+
+/// The letters of the Matrix code: half-width katakana and a few digits.
+const KANA: &str = "ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜﾂｵﾘｱﾎﾃﾏｹﾒｴｶｷﾑﾕﾗｾﾈｽﾀﾇﾍ012345789Z";
+
+/// A colour at a share of its brightness.
+fn shade((r, g, b): Rgb, k: f32) -> Rgb {
+    let f = |v: u8| (v as f32 * k.clamp(0.0, 1.0)) as u8;
+    (f(r), f(g), f(b))
 }
 
 /// `#rrggbb` as a colour.
@@ -312,6 +326,31 @@ impl Launch {
             for y in 2..rows {
                 let edge = if y == 2 { "  " } else { " " };
                 out.push_str(&format!("{}{}", Cursor::at(1, y as u16), style::rgb(edge, None, Some(c), "")));
+            }
+        }
+
+        // Strands of code down the left side, each with its head at the
+        // bottom in the accent and a tail fading upward, gaps between them.
+        // The same letters each time, so a redraw stays still.
+        if let Some(c) = look.side_glyphs {
+            let kana: Vec<char> = KANA.chars().collect();
+            let (mut len, mut gap, mut k, mut total) = (0, 0, 0, 1);
+            for y in (2..rows).rev() {
+                if len == 0 && gap == 0 {
+                    // The next strand from the bottom: 6 to 17 rows, 1 to 4 apart.
+                    len = 6 + (y * 7) % 12;
+                    gap = 1 + (y * 5) % 4;
+                    (k, total) = (0, len);
+                }
+                if len > 0 {
+                    let ch = kana[(y * 11 + y / 3) % kana.len()].to_string();
+                    let lit = if k == 0 { look.accent } else { shade(c, 1.0 - 0.8 * k as f32 / total as f32) };
+                    out.push_str(&format!("{}{}", Cursor::at(1, y as u16), style::rgb(&ch, Some(lit), None, "")));
+                    len -= 1;
+                    k += 1;
+                } else {
+                    gap -= 1;
+                }
             }
         }
 
@@ -810,6 +849,8 @@ mod tests {
         assert_eq!(k.side, Some((255, 153, 0)));
         assert_eq!(k.text, PLAIN.text);
         assert!(PLAIN.side.is_none());
+        assert_eq!(Look::parse("side_glyphs = #008f11\n").side_glyphs, Some((0, 143, 17)));
+        assert_eq!(shade((200, 100, 0), 0.5), (100, 50, 0));
     }
 
     #[test]

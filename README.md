@@ -20,7 +20,7 @@ bind F12 exec launch
 
 From a key binding it opens its own [glass](https://github.com/isene/glass) window. The same key closes it again.
 
-`~/.launchrc` changes the colours, one `name = #rrggbb` per line: `accent`, `text`, `dim`, `dark`, `bar_bg`, `bar_title`, `bar_text`, `foot_bg`, `foot_text`, `foot_dim`, `pick_fg`, `pick_bg`, and `side` for a bar down the left side. A name left out keeps its colour. The [views](https://github.com/isene/fe2o3#views) tool writes this file, as in the LCARS view: black letters on bars of orange and lilac, like the screens in Star Trek.
+`~/.launchrc` changes the colours, one `name = #rrggbb` per line: `accent`, `text`, `dim`, `dark`, `bar_bg`, `bar_title`, `bar_text`, `foot_bg`, `foot_text`, `foot_dim`, `pick_fg`, `pick_bg`, `side` for a bar down the left side, and `side_glyphs` for strands of Matrix code down the left side instead. A name left out keeps its colour. The [views](https://github.com/isene/fe2o3#views) tool writes this file, as in the LCARS view: black letters on bars of orange and lilac, like the screens in Star Trek.
 
 | Key | Does |
 |---|---|
