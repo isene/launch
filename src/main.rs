@@ -24,7 +24,9 @@ use std::process::{Command, Stdio};
 
 type Rgb = (u8, u8, u8);
 
-/// The colours of one look.
+/// The colours of the window. ~/.launchrc changes any of them with
+/// `name = #rrggbb` lines, the names as below; a view writes it.
+#[derive(Clone, Copy)]
 struct Look {
     accent: Rgb,
     text: Rgb,
@@ -38,7 +40,7 @@ struct Look {
     foot_dim: Rgb,
     pick_fg: Rgb,
     pick_bg: Rgb,
-    /// The LCARS bar down the left side, joining the top bar.
+    /// A bar down the left side, joined to the top bar (the LCARS view).
     side: Option<Rgb>,
 }
 
@@ -58,23 +60,42 @@ const PLAIN: Look = Look {
     side: None,
 };
 
-/// `--lcars`: the screens of Star Trek. Black letters on bars of
-/// orange and lilac, peach text, the pick lit up in orange.
-const LCARS: Look = Look {
-    accent: (255, 153, 0),
-    text: (255, 204, 153),
-    dim: (153, 153, 255),
-    dark: (102, 102, 153),
-    bar_bg: (255, 153, 0),
-    bar_title: (0, 0, 0),
-    bar_text: (0, 0, 0),
-    foot_bg: (204, 153, 204),
-    foot_text: (0, 0, 0),
-    foot_dim: (0, 0, 0),
-    pick_fg: (0, 0, 0),
-    pick_bg: (255, 153, 0),
-    side: Some((255, 153, 0)),
-};
+impl Look {
+    fn load(home: &std::path::Path) -> Look {
+        Look::parse(&fs::read_to_string(home.join(".launchrc")).unwrap_or_default())
+    }
+
+    fn parse(text: &str) -> Look {
+        let mut k = PLAIN;
+        for line in text.lines().map(str::trim).filter(|l| !l.starts_with('#')) {
+            let Some((name, v)) = line.split_once('=') else { continue };
+            let Some(c) = hex(v.trim()) else { continue };
+            match name.trim() {
+                "accent" => k.accent = c,
+                "text" => k.text = c,
+                "dim" => k.dim = c,
+                "dark" => k.dark = c,
+                "bar_bg" => k.bar_bg = c,
+                "bar_title" => k.bar_title = c,
+                "bar_text" => k.bar_text = c,
+                "foot_bg" => k.foot_bg = c,
+                "foot_text" => k.foot_text = c,
+                "foot_dim" => k.foot_dim = c,
+                "pick_fg" => k.pick_fg = c,
+                "pick_bg" => k.pick_bg = c,
+                "side" => k.side = Some(c),
+                _ => {}
+            }
+        }
+        k
+    }
+}
+
+/// `#rrggbb` as a colour.
+fn hex(v: &str) -> Option<Rgb> {
+    let n = u32::from_str_radix(v.strip_prefix('#')?.get(..6)?, 16).ok()?;
+    Some(((n >> 16) as u8, (n >> 8) as u8, n as u8))
+}
 
 /// The widest a program name gets drawn.
 const PROG_W: usize = 28;
@@ -114,7 +135,7 @@ struct Launch {
     swap: bool,
     /// What the query comes to, when it is a sum.
     answer: Option<String>,
-    look: &'static Look,
+    look: Look,
 }
 
 fn main() {
@@ -128,7 +149,6 @@ fn main() {
             println!("launch — your helpers and every program, found as you type");
             println!();
             println!("  launch                    the launcher (opens its own window from a key binding)");
-            println!("  launch --lcars            the launcher in the LCARS look of Star Trek");
             println!("  launch --password PROMPT  ask for a password in a window, print it");
             println!();
             println!("  type        filter the helpers and the programs");
@@ -140,6 +160,7 @@ fn main() {
             println!("  ~/.launch holds the helpers, one per line:");
             println!("    Volume Up [Ctrl+F3] = wpctl set-volume @DEFAULT_AUDIO_SINK@ 10%+");
             println!("  A blank line starts a new group.");
+            println!("  ~/.launchrc changes the colours (a view writes it).");
             return;
         }
         Some("--password") => {
@@ -153,11 +174,10 @@ fn main() {
         }
         _ => {}
     }
-    let lcars = args.iter().any(|a| a == "--lcars");
     // SAFETY: isatty only looks at the descriptor.
     let on_tty = unsafe { libc::isatty(0) == 1 && libc::isatty(1) == 1 };
     if !on_tty {
-        toggle_window(lcars);
+        toggle_window();
         return;
     }
 
@@ -165,7 +185,7 @@ fn main() {
     let text = fs::read_to_string(home.join(".launch")).unwrap_or_default();
     let helpers = parse_helpers(&text);
     let lit = vec![true; helpers.len()];
-    let look = if lcars { &LCARS } else { &PLAIN };
+    let look = Look::load(&home);
     let mut l = Launch { helpers, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0, swap: false, answer: None, look };
 
     let pid_file = runtime_dir().join("launch.pid");
@@ -285,7 +305,7 @@ impl Launch {
         }
         self.spots.clear();
 
-        // LCARS: a bar down the left side, joined to the top bar by a
+        // A bar down the left side (LCARS), joined to the top bar by a
         // step. Cells of colour, since a terminal may draw block letters
         // with gaps between the rows.
         if let Some(c) = look.side {
@@ -328,7 +348,7 @@ impl Launch {
                     for (i, h) in self.helpers.iter().enumerate().filter(|(_, h)| h.group == g) {
                         if yy < bottom {
                             let picked = self.lit[i] && self.spots.len() == self.sel;
-                            out.push_str(&format!("{}{}", Cursor::at(x as u16, yy as u16), helper_cell(look, h, nw, cell, self.lit[i], picked)));
+                            out.push_str(&format!("{}{}", Cursor::at(x as u16, yy as u16), helper_cell(&look, h, nw, cell, self.lit[i], picked)));
                             if self.lit[i] {
                                 self.spots.push(Spot { item: Item::Helper(i), x, y: yy });
                             }
@@ -393,7 +413,7 @@ impl Launch {
             let n = self.lit.iter().filter(|&&l| l).count();
             format!("{n} helpers and {} programs match", self.hits.len())
         };
-        // LCARS: the side bar ends in its own corner, a gap before the foot.
+        // The side bar ends in its own cell, a gap before the foot.
         let (lead, fw) = match look.side {
             Some(c) => (format!("{} ", style::rgb(" ", None, Some(c), "")), w.saturating_sub(2)),
             None => (String::new(), w),
@@ -676,7 +696,7 @@ fn run_detached(cmd: &str, home: &std::path::Path) {
 
 /// From a key binding: close the open launch window if there is one,
 /// or open a new one.
-fn toggle_window(lcars: bool) {
+fn toggle_window() {
     let pid_file = runtime_dir().join("launch.pid");
     if let Some(pid) = fs::read_to_string(&pid_file).ok().and_then(|s| s.trim().parse::<i32>().ok()) {
         if fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == "launch") {
@@ -687,7 +707,7 @@ fn toggle_window(lcars: bool) {
         }
     }
     let me = std::env::current_exe().unwrap_or_else(|_| "launch".into());
-    let err = Command::new("glass").args(["--class", "Launch", "--"]).arg(me).args(lcars.then_some("--lcars")).exec();
+    let err = Command::new("glass").args(["--class", "Launch", "--"]).arg(me).exec();
     eprintln!("launch: cannot start glass: {err}");
 }
 
@@ -782,6 +802,15 @@ fn take_cells(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launchrc_changes_only_the_colours_it_names() {
+        let k = Look::parse("# a view\naccent = #ff9900\nside = #FF9900\ntext = bad\n");
+        assert_eq!(k.accent, (255, 153, 0));
+        assert_eq!(k.side, Some((255, 153, 0)));
+        assert_eq!(k.text, PLAIN.text);
+        assert!(PLAIN.side.is_none());
+    }
 
     #[test]
     fn helpers_read_with_keys_and_groups() {
