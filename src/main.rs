@@ -22,12 +22,59 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-const RUST_RGB: (u8, u8, u8) = (247, 76, 0);
-const TEXT_RGB: (u8, u8, u8) = (225, 225, 230);
-const DIM_RGB: (u8, u8, u8) = (140, 140, 150);
-const DARK_RGB: (u8, u8, u8) = (70, 70, 80);
-const BAR_BG: (u8, u8, u8) = (38, 38, 38);
-const PICK_BG: (u8, u8, u8) = (52, 48, 60);
+type Rgb = (u8, u8, u8);
+
+/// The colours of one look.
+struct Look {
+    accent: Rgb,
+    text: Rgb,
+    dim: Rgb,
+    dark: Rgb,
+    bar_bg: Rgb,
+    bar_title: Rgb,
+    bar_text: Rgb,
+    foot_bg: Rgb,
+    foot_text: Rgb,
+    foot_dim: Rgb,
+    pick_fg: Rgb,
+    pick_bg: Rgb,
+    /// The LCARS bar down the left side, joining the top bar.
+    side: Option<Rgb>,
+}
+
+const PLAIN: Look = Look {
+    accent: (247, 76, 0),
+    text: (225, 225, 230),
+    dim: (140, 140, 150),
+    dark: (70, 70, 80),
+    bar_bg: (38, 38, 38),
+    bar_title: (247, 76, 0),
+    bar_text: (140, 140, 150),
+    foot_bg: (38, 38, 38),
+    foot_text: (200, 200, 205),
+    foot_dim: (140, 140, 150),
+    pick_fg: (225, 225, 230),
+    pick_bg: (52, 48, 60),
+    side: None,
+};
+
+/// `--lcars`: the screens of Star Trek. Black letters on bars of
+/// orange and lilac, peach text, the pick lit up in orange.
+const LCARS: Look = Look {
+    accent: (255, 153, 0),
+    text: (255, 204, 153),
+    dim: (153, 153, 255),
+    dark: (102, 102, 153),
+    bar_bg: (255, 153, 0),
+    bar_title: (0, 0, 0),
+    bar_text: (0, 0, 0),
+    foot_bg: (204, 153, 204),
+    foot_text: (0, 0, 0),
+    foot_dim: (0, 0, 0),
+    pick_fg: (0, 0, 0),
+    pick_bg: (255, 153, 0),
+    side: Some((255, 153, 0)),
+};
 
 /// The widest a program name gets drawn.
 const PROG_W: usize = 28;
@@ -67,6 +114,7 @@ struct Launch {
     swap: bool,
     /// What the query comes to, when it is a sum.
     answer: Option<String>,
+    look: &'static Look,
 }
 
 fn main() {
@@ -80,6 +128,7 @@ fn main() {
             println!("launch — your helpers and every program, found as you type");
             println!();
             println!("  launch                    the launcher (opens its own window from a key binding)");
+            println!("  launch --lcars            the launcher in the LCARS look of Star Trek");
             println!("  launch --password PROMPT  ask for a password in a window, print it");
             println!();
             println!("  type        filter the helpers and the programs");
@@ -104,10 +153,11 @@ fn main() {
         }
         _ => {}
     }
+    let lcars = args.iter().any(|a| a == "--lcars");
     // SAFETY: isatty only looks at the descriptor.
     let on_tty = unsafe { libc::isatty(0) == 1 && libc::isatty(1) == 1 };
     if !on_tty {
-        toggle_window();
+        toggle_window(lcars);
         return;
     }
 
@@ -115,7 +165,8 @@ fn main() {
     let text = fs::read_to_string(home.join(".launch")).unwrap_or_default();
     let helpers = parse_helpers(&text);
     let lit = vec![true; helpers.len()];
-    let mut l = Launch { helpers, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0, swap: false, answer: None };
+    let look = if lcars { &LCARS } else { &PLAIN };
+    let mut l = Launch { helpers, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0, swap: false, answer: None, look };
 
     let pid_file = runtime_dir().join("launch.pid");
     let _ = fs::write(&pid_file, std::process::id().to_string());
@@ -227,11 +278,22 @@ impl Launch {
     fn draw(&mut self) {
         let (cols, rows) = Crust::terminal_size();
         let (w, rows) = (cols as usize, rows as usize);
+        let look = self.look;
         let mut out = String::new();
         for y in 1..=rows {
             out.push_str(&format!("{}{}", Cursor::at(1, y as u16), seq::ERASE_EOL));
         }
         self.spots.clear();
+
+        // LCARS: a bar down the left side, joined to the top bar by a
+        // step. Cells of colour, since a terminal may draw block letters
+        // with gaps between the rows.
+        if let Some(c) = look.side {
+            for y in 2..rows {
+                let edge = if y == 2 { "  " } else { " " };
+                out.push_str(&format!("{}{}", Cursor::at(1, y as u16), style::rgb(edge, None, Some(c), "")));
+            }
+        }
 
         // The bar across the top.
         let tail = format!("   {} helpers · {} programs", self.helpers.len(), self.progs.len());
@@ -239,9 +301,9 @@ impl Launch {
         out.push_str(&format!(
             "{}{}{}{}",
             Cursor::at(1, 1),
-            style::rgb(" ", None, Some(BAR_BG), ""),
-            style::rgb("launch", Some(RUST_RGB), Some(BAR_BG), "b"),
-            style::rgb(&format!("{tail}{}", " ".repeat(w.saturating_sub(used))), Some(DIM_RGB), Some(BAR_BG), "")
+            style::rgb(" ", None, Some(look.bar_bg), ""),
+            style::rgb("launch", Some(look.bar_title), Some(look.bar_bg), "b"),
+            style::rgb(&format!("{tail}{}", " ".repeat(w.saturating_sub(used))), Some(look.bar_text), Some(look.bar_bg), "")
         ));
 
         // The helpers, a group never split across two columns.
@@ -266,7 +328,7 @@ impl Launch {
                     for (i, h) in self.helpers.iter().enumerate().filter(|(_, h)| h.group == g) {
                         if yy < bottom {
                             let picked = self.lit[i] && self.spots.len() == self.sel;
-                            out.push_str(&format!("{}{}", Cursor::at(x as u16, yy as u16), helper_cell(h, nw, cell, self.lit[i], picked)));
+                            out.push_str(&format!("{}{}", Cursor::at(x as u16, yy as u16), helper_cell(look, h, nw, cell, self.lit[i], picked)));
                             if self.lit[i] {
                                 self.spots.push(Spot { item: Item::Helper(i), x, y: yy });
                             }
@@ -280,13 +342,13 @@ impl Launch {
         }
 
         // The line, then the search field.
-        out.push_str(&format!("{}{}", Cursor::at(3, y as u16), style::rgb(&"─".repeat(w.saturating_sub(4)), Some(DARK_RGB), None, "")));
+        out.push_str(&format!("{}{}", Cursor::at(3, y as u16), style::rgb(&"─".repeat(w.saturating_sub(4)), Some(look.dark), None, "")));
         let field_y = y + 1;
         out.push_str(&format!(
             "{}{} {}",
             Cursor::at(3, field_y as u16),
-            style::rgb("›", Some(RUST_RGB), None, "b"),
-            style::rgb(&self.query, Some(TEXT_RGB), None, "")
+            style::rgb("›", Some(look.accent), None, "b"),
+            style::rgb(&self.query, Some(look.text), None, "")
         ));
 
         // The programs, down each column, then across.
@@ -294,17 +356,17 @@ impl Launch {
         let height = bottom.saturating_sub(top);
         if self.query.trim().is_empty() {
             let say = format!("type to search {} programs", self.progs.len());
-            out.push_str(&format!("{}{}", Cursor::at(5, top as u16), style::rgb(&say, Some(DIM_RGB), None, "i")));
+            out.push_str(&format!("{}{}", Cursor::at(5, top as u16), style::rgb(&say, Some(look.dim), None, "i")));
         } else if let (Some(a), true) = (&self.answer, self.hits.is_empty()) {
             out.push_str(&format!(
                 "{}{} {}",
                 Cursor::at(5, top as u16),
-                style::rgb("=", Some(RUST_RGB), None, "b"),
-                style::rgb(a, Some(TEXT_RGB), None, "b")
+                style::rgb("=", Some(look.accent), None, "b"),
+                style::rgb(a, Some(look.text), None, "b")
             ));
         } else if self.hits.is_empty() {
             let say = "no program by that name; Enter runs what you typed";
-            out.push_str(&format!("{}{}", Cursor::at(5, top as u16), style::rgb(say, Some(DIM_RGB), None, "i")));
+            out.push_str(&format!("{}{}", Cursor::at(5, top as u16), style::rgb(say, Some(look.dim), None, "i")));
         } else if height > 0 {
             let pw = self.hits.iter().map(|&i| crust::display_width(&self.progs[i])).max().unwrap_or(0).min(PROG_W);
             let colw = pw + 4;
@@ -314,7 +376,7 @@ impl Launch {
                 let yy = top + k % height;
                 let picked = self.spots.len() == self.sel;
                 let name = fit(&self.progs[i], pw);
-                let text = if picked { style::rgb(&name, Some(TEXT_RGB), Some(PICK_BG), "b") } else { style::rgb(&name, Some(TEXT_RGB), None, "") };
+                let text = if picked { style::rgb(&name, Some(look.pick_fg), Some(look.pick_bg), "b") } else { style::rgb(&name, Some(look.text), None, "") };
                 out.push_str(&format!("{}{}", Cursor::at(x as u16, yy as u16), text));
                 self.spots.push(Spot { item: Item::Prog(i), x, y: yy });
             }
@@ -331,14 +393,19 @@ impl Launch {
             let n = self.lit.iter().filter(|&&l| l).count();
             format!("{n} helpers and {} programs match", self.hits.len())
         };
+        // LCARS: the side bar ends in its own corner, a gap before the foot.
+        let (lead, fw) = match look.side {
+            Some(c) => (format!("{} ", style::rgb(" ", None, Some(c), "")), w.saturating_sub(2)),
+            None => (String::new(), w),
+        };
         let version = format!("v{} ", env!("CARGO_PKG_VERSION"));
-        let foot = format!(" {}", take_cells(&foot, w.saturating_sub(version.len() + 3)));
-        let pad = w.saturating_sub(crust::display_width(&foot) + version.len());
+        let foot = format!(" {}", take_cells(&foot, fw.saturating_sub(version.len() + 3)));
+        let pad = fw.saturating_sub(crust::display_width(&foot) + version.len());
         out.push_str(&format!(
-            "{}{}{}",
+            "{}{lead}{}{}",
             Cursor::at(1, rows as u16),
-            style::rgb(&format!("{foot}{}", " ".repeat(pad)), Some((200, 200, 205)), Some(BAR_BG), ""),
-            style::rgb(&version, Some(DIM_RGB), Some(BAR_BG), "")
+            style::rgb(&format!("{foot}{}", " ".repeat(pad)), Some(look.foot_text), Some(look.foot_bg), ""),
+            style::rgb(&version, Some(look.foot_dim), Some(look.foot_bg), "")
         ));
 
         // The cursor rests at the end of what you typed.
@@ -392,19 +459,19 @@ fn copy_cmd(text: &str) -> String {
 }
 
 /// One helper: its name, then its key dim beside it.
-fn helper_cell(h: &Helper, nw: usize, cell: usize, lit: bool, picked: bool) -> String {
+fn helper_cell(k: &Look, h: &Helper, nw: usize, cell: usize, lit: bool, picked: bool) -> String {
     let body = if h.hot.is_empty() { fit(&h.name, cell) } else { format!("{}  {}", fit(&h.name, nw), fit(&h.hot, cell - nw - 2)) };
     if picked {
-        return style::rgb(&body, Some(TEXT_RGB), Some(PICK_BG), "b");
+        return style::rgb(&body, Some(k.pick_fg), Some(k.pick_bg), "b");
     }
     if !lit {
-        return style::rgb(&body, Some(DARK_RGB), None, "");
+        return style::rgb(&body, Some(k.dark), None, "");
     }
-    let name = style::rgb(&fit(&h.name, nw), Some(TEXT_RGB), None, "");
+    let name = style::rgb(&fit(&h.name, nw), Some(k.text), None, "");
     if h.hot.is_empty() {
         return format!("{name}{}", " ".repeat(cell - nw));
     }
-    format!("{name}  {}", style::rgb(&h.hot, Some(DIM_RGB), None, ""))
+    format!("{name}  {}", style::rgb(&h.hot, Some(k.dim), None, ""))
 }
 
 /// ~/.launch: `Name [Hotkey] = command`, the hotkey optional, a blank
@@ -609,7 +676,7 @@ fn run_detached(cmd: &str, home: &std::path::Path) {
 
 /// From a key binding: close the open launch window if there is one,
 /// or open a new one.
-fn toggle_window() {
+fn toggle_window(lcars: bool) {
     let pid_file = runtime_dir().join("launch.pid");
     if let Some(pid) = fs::read_to_string(&pid_file).ok().and_then(|s| s.trim().parse::<i32>().ok()) {
         if fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == "launch") {
@@ -620,7 +687,7 @@ fn toggle_window() {
         }
     }
     let me = std::env::current_exe().unwrap_or_else(|_| "launch".into());
-    let err = Command::new("glass").args(["--class", "Launch", "--"]).arg(me).exec();
+    let err = Command::new("glass").args(["--class", "Launch", "--"]).arg(me).args(lcars.then_some("--lcars")).exec();
     eprintln!("launch: cannot start glass: {err}");
 }
 

@@ -20,6 +20,8 @@ bind F12 exec launch
 
 From a key binding it opens its own [glass](https://github.com/isene/glass) window. The same key closes it again.
 
+`launch --lcars` draws it like the screens in Star Trek: black letters on bars of orange and lilac, a bar down the left side, the text in peach, the pick lit in orange.
+
 | Key | Does |
 |---|---|
 | type | Filter the helpers and the programs at once |
