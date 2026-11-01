@@ -164,6 +164,7 @@ fn main() {
             println!();
             println!("  launch                    the launcher (opens its own window from a key binding)");
             println!("  launch --password PROMPT  ask for a password in a window, print it");
+            println!("  launch --run NAME         run a helper by its name, or a program, as Enter would");
             println!();
             println!("  type        filter the helpers and the programs");
             println!("  arrows Tab  move");
@@ -180,6 +181,9 @@ fn main() {
         Some("--password") => {
             let prompt = args.get(1).map(String::as_str).unwrap_or("Password");
             std::process::exit(password(prompt));
+        }
+        Some("--run") if args.len() >= 2 => {
+            std::process::exit(run_named(&args[1..].join(" ")));
         }
         Some("--ask") if args.len() >= 2 => {
             let prompt = args.get(2).map(String::as_str).unwrap_or("Password");
@@ -237,18 +241,7 @@ impl Launch {
                     if cmd.is_empty() {
                         continue;
                     }
-                    let first = cmd.split_whitespace().next().unwrap_or("");
-                    if needs_terminal(first) != self.swap {
-                        // The window is named after the program: sh prints
-                        // the title (handed in as $0) before it starts it.
-                        let name = first.rsplit('/').next().unwrap_or(first);
-                        return Some(format!(
-                            "glass -- /bin/sh -c {} {}",
-                            sh_quote(&format!("printf %s \"$0\"; exec {cmd}")),
-                            sh_quote(&style::title_seq(name))
-                        ));
-                    }
-                    return Some(cmd);
+                    return Some(in_terminal(&cmd, self.swap));
                 }
                 "C-T" => self.swap = !self.swap,
                 "DOWN" | "TAB" => {
@@ -644,6 +637,40 @@ fn balance(sizes: &[usize], ncols: usize) -> Vec<Vec<usize>> {
 /// - A script is taken as a one-shot action, so it runs on its own.
 /// - A binary linked to a window system library draws its own window.
 /// - Anything else is a terminal program.
+/// A program, or a typed command, goes into a glass when it needs a
+/// terminal; `swap` (Ctrl+T) turns that choice around.
+fn in_terminal(cmd: &str, swap: bool) -> String {
+    let first = cmd.split_whitespace().next().unwrap_or("");
+    if needs_terminal(first) == swap {
+        return cmd.to_string();
+    }
+    // The window is named after the program: sh prints the title (handed
+    // in as $0) before it starts it.
+    let name = first.rsplit('/').next().unwrap_or(first);
+    format!(
+        "glass -- /bin/sh -c {} {}",
+        sh_quote(&format!("printf %s \"$0\"; exec {cmd}")),
+        sh_quote(&style::title_seq(name))
+    )
+}
+
+/// `--run NAME`: what Enter would run for a helper of that name, or else
+/// for a program of that name. Exit status 1 when there is neither.
+fn run_named(name: &str) -> i32 {
+    let home = home();
+    let text = fs::read_to_string(home.join(".launch")).unwrap_or_default();
+    let helpers = parse_helpers(&text);
+    let cmd = match helpers.iter().find(|h| h.name.eq_ignore_ascii_case(name)) {
+        Some(h) => h.cmd.clone(),
+        None => match name.split_whitespace().next() {
+            Some(first) if find_in_path(first).is_some() => in_terminal(name, false),
+            _ => return 1,
+        },
+    };
+    run_detached(&cmd, &home);
+    0
+}
+
 fn needs_terminal(name: &str) -> bool {
     if name.is_empty() || name == "glass" {
         return false;
@@ -841,6 +868,12 @@ fn take_cells(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn glass_runs_as_is_unless_swapped() {
+        assert_eq!(in_terminal("glass", false), "glass");
+        assert!(in_terminal("glass", true).starts_with("glass -- /bin/sh -c "));
+    }
 
     #[test]
     fn launchrc_changes_only_the_colours_it_names() {

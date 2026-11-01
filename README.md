@@ -69,6 +69,15 @@ launch --password "Master password"
 
 Opens a window, hides what you type, and prints it. The answer comes back through a pipe, so it never lands in a file. Nothing typed gives exit status 1.
 
+## Run by name
+
+```bash
+launch --run Beam
+launch --run gluon
+```
+
+Runs a helper by its name, or else a program, the way `Enter` would: a program that needs a terminal opens in a glass. Nothing found gives exit status 1. Computer uses it to start what you ask for.
+
 ## Speed
 
 launch draws its first frame about 5 ms after it starts. Most of the wait is the terminal window opening. Between keys it does nothing at all.
