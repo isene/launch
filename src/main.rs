@@ -114,6 +114,13 @@ fn hex(v: &str) -> Option<Rgb> {
 /// The widest a program name gets drawn.
 const PROG_W: usize = 28;
 
+/// A group of helpers: a name over it and a colour for it, from a
+/// `## Name #rrggbb` line. A group a blank line starts has neither.
+struct Group {
+    name: String,
+    colour: Option<Rgb>,
+}
+
 /// One line of ~/.launch.
 struct Helper {
     name: String,
@@ -137,6 +144,7 @@ struct Spot {
 
 struct Launch {
     helpers: Vec<Helper>,
+    groups: Vec<Group>,
     progs: Vec<String>,
     query: String,
     /// Which helpers hold the query.
@@ -174,7 +182,7 @@ fn main() {
             println!();
             println!("  ~/.launch holds the helpers, one per line:");
             println!("    Volume Up [Ctrl+F3] = wpctl set-volume @DEFAULT_AUDIO_SINK@ 10%+");
-            println!("  A blank line starts a new group.");
+            println!("  A blank line starts a new group; `## Sound #5b8234` starts one with a name and a colour.");
             println!("  ~/.launchrc changes the colours (a view writes it).");
             return;
         }
@@ -201,10 +209,10 @@ fn main() {
 
     let home = home();
     let text = fs::read_to_string(home.join(".launch")).unwrap_or_default();
-    let helpers = parse_helpers(&text);
+    let (helpers, groups) = parse_helpers(&text);
     let lit = vec![true; helpers.len()];
     let look = Look::load(&home);
-    let mut l = Launch { helpers, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0, swap: false, answer: None, look };
+    let mut l = Launch { helpers, groups, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0, swap: false, answer: None, look };
 
     let pid_file = runtime_dir().join("launch.pid");
     let _ = fs::write(&pid_file, std::process::id().to_string());
@@ -366,8 +374,10 @@ impl Launch {
             let hw = self.helpers.iter().map(|h| crust::display_width(&h.hot)).max().unwrap_or(0);
             let cell = nw + if hw > 0 { 2 + hw } else { 0 };
             let colw = cell + 4;
-            let groups = self.helpers.last().map(|h| h.group + 1).unwrap_or(0);
-            let sizes: Vec<usize> = (0..groups).map(|g| self.helpers.iter().filter(|h| h.group == g).count()).collect();
+            // A named group takes a row more, for its name.
+            let sizes: Vec<usize> = self.groups.iter().enumerate()
+                .map(|(g, grp)| self.helpers.iter().filter(|h| h.group == g).count() + usize::from(!grp.name.is_empty()))
+                .collect();
             let columns = balance(&sizes, (w.saturating_sub(2) / colw).max(1));
             let mut height = 0;
             for (c, col) in columns.iter().enumerate() {
@@ -377,10 +387,27 @@ impl Launch {
                     if k > 0 {
                         yy += 1;
                     }
+                    let grp = &self.groups[g];
+                    let colour = grp.colour.unwrap_or(look.dim);
+                    if !grp.name.is_empty() {
+                        if yy < bottom {
+                            let any = self.helpers.iter().enumerate().any(|(i, h)| h.group == g && self.lit[i]);
+                            let c = if any { grp.colour.unwrap_or(look.accent) } else { look.dark };
+                            let name = fit(&grp.name, cell).trim_end().to_string();
+                            let rule = "─".repeat(cell.saturating_sub(crust::display_width(&name) + 1));
+                            out.push_str(&format!(
+                                "{}{} {}",
+                                Cursor::at(x as u16, yy as u16),
+                                style::rgb(&name, Some(c), None, "b"),
+                                style::rgb(&rule, Some(shade(c, 0.45)), None, "")
+                            ));
+                        }
+                        yy += 1;
+                    }
                     for (i, h) in self.helpers.iter().enumerate().filter(|(_, h)| h.group == g) {
                         if yy < bottom {
                             let picked = self.lit[i] && self.spots.len() == self.sel;
-                            out.push_str(&format!("{}{}", Cursor::at(x as u16, yy as u16), helper_cell(&look, h, nw, cell, self.lit[i], picked)));
+                            out.push_str(&format!("{}{}", Cursor::at(x as u16, yy as u16), helper_cell(&look, h, nw, cell, self.lit[i], picked, colour)));
                             if self.lit[i] {
                                 self.spots.push(Spot { item: Item::Helper(i), x, y: yy });
                             }
@@ -510,8 +537,8 @@ fn copy_cmd(text: &str) -> String {
     format!("printf %s {t} | xclip -selection clipboard; printf %s {t} | xclip -selection primary")
 }
 
-/// One helper: its name, then its key dim beside it.
-fn helper_cell(k: &Look, h: &Helper, nw: usize, cell: usize, lit: bool, picked: bool) -> String {
+/// One helper: its name, then its key beside it in the group's colour.
+fn helper_cell(k: &Look, h: &Helper, nw: usize, cell: usize, lit: bool, picked: bool, hot: Rgb) -> String {
     let body = if h.hot.is_empty() { fit(&h.name, cell) } else { format!("{}  {}", fit(&h.name, nw), fit(&h.hot, cell - nw - 2)) };
     if picked {
         return style::rgb(&body, Some(k.pick_fg), Some(k.pick_bg), "b");
@@ -523,29 +550,42 @@ fn helper_cell(k: &Look, h: &Helper, nw: usize, cell: usize, lit: bool, picked: 
     if h.hot.is_empty() {
         return format!("{name}{}", " ".repeat(cell - nw));
     }
-    format!("{name}  {}", style::rgb(&h.hot, Some(k.dim), None, ""))
+    format!("{name}  {}", style::rgb(&h.hot, Some(hot), None, ""))
 }
 
 /// ~/.launch: `Name [Hotkey] = command`, the hotkey optional, a blank
-/// line between groups, `#` for a comment.
-fn parse_helpers(text: &str) -> Vec<Helper> {
+/// line between groups, `## Name #rrggbb` to start a named one (the
+/// colour optional), `#` for a comment.
+fn parse_helpers(text: &str) -> (Vec<Helper>, Vec<Group>) {
     let mut out: Vec<Helper> = Vec::new();
-    let mut group = 0;
-    let mut gap = false;
+    let mut groups: Vec<Group> = Vec::new();
+    // The next helper starts a group, named when a `##` line came first.
+    let mut fresh = true;
+    let mut named: Option<Group> = None;
     for line in text.lines() {
         let t = line.trim();
+        if let Some(h) = t.strip_prefix("## ") {
+            let (name, colour) = match h.rsplit_once(' ').and_then(|(n, c)| Some((n, hex(c)?))) {
+                Some((n, c)) => (n.trim(), Some(c)),
+                None => (h.trim(), None),
+            };
+            named = Some(Group { name: name.into(), colour });
+            fresh = true;
+            continue;
+        }
         if t.starts_with('#') {
             continue;
         }
         if t.is_empty() {
-            gap = !out.is_empty();
+            fresh = true;
             continue;
         }
         let Some((left, cmd)) = t.split_once(" = ") else { continue };
-        if gap {
-            group += 1;
-            gap = false;
+        if fresh {
+            groups.push(named.take().unwrap_or(Group { name: String::new(), colour: None }));
+            fresh = false;
         }
+        let group = groups.len() - 1;
         let left = left.trim();
         let (name, hot) = match left.strip_suffix(']').and_then(|l| l.rsplit_once('[')) {
             Some((n, h)) => (n.trim(), h.trim()),
@@ -553,7 +593,7 @@ fn parse_helpers(text: &str) -> Vec<Helper> {
         };
         out.push(Helper { name: name.into(), hot: hot.into(), cmd: cmd.trim().into(), group });
     }
-    out
+    (out, groups)
 }
 
 /// Every program name, sorted. bare keeps them in ~/.bare_exe_cache: a
@@ -659,7 +699,7 @@ fn in_terminal(cmd: &str, swap: bool) -> String {
 fn run_named(name: &str) -> i32 {
     let home = home();
     let text = fs::read_to_string(home.join(".launch")).unwrap_or_default();
-    let helpers = parse_helpers(&text);
+    let (helpers, _) = parse_helpers(&text);
     let cmd = match helpers.iter().find(|h| h.name.eq_ignore_ascii_case(name)) {
         Some(h) => h.cmd.clone(),
         None => match name.split_whitespace().next() {
@@ -888,11 +928,20 @@ mod tests {
 
     #[test]
     fn helpers_read_with_keys_and_groups() {
-        let h = parse_helpers("# c\nMute [Ctrl+F1] = wpctl a\nUp = b || c\n\n\nTile [Win+x] = pkill -USR2 tile\n");
-        assert_eq!(h.len(), 3);
+        let (h, g) = parse_helpers("# c\nMute [Ctrl+F1] = wpctl a\nUp = b || c\n\n\nTile [Win+x] = pkill -USR2 tile\n");
+        assert_eq!((h.len(), g.len()), (3, 2));
         assert_eq!((h[0].name.as_str(), h[0].hot.as_str(), h[0].cmd.as_str()), ("Mute", "Ctrl+F1", "wpctl a"));
         assert_eq!((h[1].hot.as_str(), h[1].cmd.as_str(), h[1].group), ("", "b || c", 0));
         assert_eq!(h[2].group, 1);
+    }
+
+    #[test]
+    fn a_double_hash_names_a_group_and_colours_it() {
+        let (h, g) = parse_helpers("## Sound #5b8234\n\nMute = a\n## Wi-Fi and VPN\nRoam = b\nVPN = c\n\nLock = d\n");
+        assert_eq!(h.iter().map(|h| h.group).collect::<Vec<_>>(), [0, 1, 1, 2]);
+        assert_eq!((g[0].name.as_str(), g[0].colour), ("Sound", Some((0x5b, 0x82, 0x34))));
+        assert_eq!((g[1].name.as_str(), g[1].colour), ("Wi-Fi and VPN", None));
+        assert_eq!((g[2].name.as_str(), g[2].colour), ("", None));
     }
 
     #[test]

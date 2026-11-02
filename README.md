@@ -46,7 +46,13 @@ Bluetooth On = rfkill unblock bluetooth
 Bluetooth Off = rfkill block bluetooth
 ```
 
-A blank line starts a new group. A group never splits across two columns.
+A blank line starts a new group. A line `## Name #rrggbb` starts one with a name over it, in that colour; the keys in the group show in the colour too, and the colour may be left out. A group never splits across two columns.
+
+```
+## Sound #7fb24a
+Mute On = wpctl set-mute @DEFAULT_AUDIO_SINK@ 1
+Volume Up [Vol+] = wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 10%+
+```
 
 ## Programs
 
