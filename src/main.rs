@@ -158,6 +158,8 @@ struct Launch {
     /// What the query comes to, when it is a sum.
     answer: Option<String>,
     look: Look,
+    /// frame's and tile's versions, for the top bar.
+    desk: String,
 }
 
 fn main() {
@@ -212,7 +214,7 @@ fn main() {
     let (helpers, groups) = parse_helpers(&text);
     let lit = vec![true; helpers.len()];
     let look = Look::load(&home);
-    let mut l = Launch { helpers, groups, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0, swap: false, answer: None, look };
+    let mut l = Launch { helpers, groups, progs: load_programs(&home), query: String::new(), lit, hits: Vec::new(), spots: Vec::new(), sel: 0, swap: false, answer: None, look, desk: desk_versions() };
 
     let pid_file = runtime_dir().join("launch.pid");
     let _ = fs::write(&pid_file, std::process::id().to_string());
@@ -320,13 +322,12 @@ impl Launch {
         }
         self.spots.clear();
 
-        // A bar down the left side (LCARS), joined to the top bar by a
-        // step. Cells of colour, since a terminal may draw block letters
-        // with gaps between the rows.
+        // A bar down the left side (LCARS), joined to the top bar. Cells
+        // of colour, since a terminal may draw block letters with gaps
+        // between the rows.
         if let Some(c) = look.side {
             for y in 2..rows {
-                let edge = if y == 2 { "  " } else { " " };
-                out.push_str(&format!("{}{}", Cursor::at(1, y as u16), style::rgb(edge, None, Some(c), "")));
+                out.push_str(&format!("{}{}", Cursor::at(1, y as u16), style::rgb(" ", None, Some(c), "")));
             }
         }
 
@@ -358,12 +359,16 @@ impl Launch {
         // The bar across the top.
         let tail = format!("   {} helpers · {} programs", self.helpers.len(), self.progs.len());
         let used = 1 + "launch".len() + crust::display_width(&tail);
+        // frame's and tile's versions at the far right, when they fit.
+        let desk = if self.desk.is_empty() || used + self.desk.len() + 4 > w { String::new() } else { format!("{} ", self.desk) };
+        let pad = w.saturating_sub(used + crust::display_width(&desk));
         out.push_str(&format!(
-            "{}{}{}{}",
+            "{}{}{}{}{}",
             Cursor::at(1, 1),
             style::rgb(" ", None, Some(look.bar_bg), ""),
             style::rgb("launch", Some(look.bar_title), Some(look.bar_bg), "b"),
-            style::rgb(&format!("{tail}{}", " ".repeat(w.saturating_sub(used))), Some(look.bar_text), Some(look.bar_bg), "")
+            style::rgb(&format!("{tail}{}", " ".repeat(pad)), Some(look.bar_text), Some(look.bar_bg), ""),
+            style::rgb(&desk, Some(look.bar_text), Some(look.bar_bg), "")
         ));
 
         // The helpers, a group never split across two columns.
@@ -594,6 +599,33 @@ fn parse_helpers(text: &str) -> (Vec<Helper>, Vec<Group>) {
         out.push(Helper { name: name.into(), hot: hot.into(), cmd: cmd.trim().into(), group });
     }
     (out, groups)
+}
+
+/// "frame 0.1.55 · tile 0.1.87": each as its binary on the PATH says it,
+/// the line `--version` prints. Read, never run: an old frame or tile, run
+/// with --version, started a second desktop.
+fn desk_versions() -> String {
+    let path = std::env::var("PATH").unwrap_or_default();
+    ["frame", "tile"]
+        .iter()
+        .filter_map(|name| {
+            let bin = path.split(':').map(|d| std::path::Path::new(d).join(name)).find(|p| p.is_file())?;
+            version_in(&fs::read(bin).ok()?, name)
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// The `name 1.2.3` line in a program's bytes: from each newline, back
+/// over digits and dots, then the name. 0.3 ms for frame and tile.
+fn version_in(bytes: &[u8], name: &str) -> Option<String> {
+    let key = format!("{name} ");
+    bytes.iter().enumerate().filter(|&(_, &c)| c == b'\n').find_map(|(end, _)| {
+        let start = bytes[..end].iter().rposition(|&c| !(c.is_ascii_digit() || c == b'.'))? + 1;
+        let v = std::str::from_utf8(&bytes[start..end]).ok()?;
+        let whole = v.split('.').count() == 3 && v.split('.').all(|p| !p.is_empty());
+        (whole && bytes[..start].ends_with(key.as_bytes())).then(|| format!("{name} {v}"))
+    })
 }
 
 /// Every program name, sorted. bare keeps them in ~/.bare_exe_cache: a
@@ -994,5 +1026,13 @@ mod tests {
         let flat: Vec<usize> = cols.concat();
         assert_eq!(flat, [0, 1, 2, 3, 4, 5]);
         assert_eq!(balance(&[3, 3], 1), vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn a_version_line_is_found_among_other_strings() {
+        let bin = b"\0usage: tile [--version]\ntile: map xid=\ntile 0.1.87\n\0";
+        assert_eq!(version_in(bin, "tile").as_deref(), Some("tile 0.1.87"));
+        assert_eq!(version_in(b"frame 2 screens\n", "frame"), None);
+        assert_eq!(version_in(b"frame 2\n", "frame"), None);
     }
 }

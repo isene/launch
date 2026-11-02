@@ -60,6 +60,8 @@ A program that needs a terminal opens in a new glass. launch decides on Enter: a
 
 launch reads the list that the [bare](https://github.com/isene/bare) shell keeps in `~/.bare_exe_cache`, so it never walks the PATH itself. Without that file it looks through the PATH once.
 
+The bar at the top shows the versions of [frame](https://github.com/isene/frame) and [tile](https://github.com/isene/tile) at its right end, read out of the two programs on the PATH (never run).
+
 ## A sum
 
 Type a sum the way [rpnx](https://github.com/isene/rpnx) takes it, numbers first and then what to do with them: `2 3 +`, `1200 1.25 *`, `2 sqrt`, `45 sin`.
