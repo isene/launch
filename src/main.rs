@@ -482,14 +482,17 @@ impl Launch {
             Some(c) => (format!("{} ", style::rgb(" ", None, Some(c), "")), w.saturating_sub(2)),
             None => (String::new(), w),
         };
-        let version = format!("v{} ", env!("CARGO_PKG_VERSION"));
-        let foot = format!(" {}", take_cells(&foot, fw.saturating_sub(version.len() + 3)));
-        let pad = fw.saturating_sub(crust::display_width(&foot) + version.len());
+        // The version in the theme's dim colour; amber once launch is rebuilt.
+        let old = crust::rebuilt();
+        let version = format!("launch v{} {}", env!("CARGO_PKG_VERSION"), if old { "is old: restart " } else { "" });
+        let vw = crust::display_width(&version);
+        let foot = format!(" {}", take_cells(&foot, fw.saturating_sub(vw + 3)));
+        let pad = fw.saturating_sub(crust::display_width(&foot) + vw);
         out.push_str(&format!(
             "{}{lead}{}{}",
             Cursor::at(1, rows as u16),
             style::rgb(&format!("{foot}{}", " ".repeat(pad)), Some(look.foot_text), Some(look.foot_bg), ""),
-            style::rgb(&version, Some(look.foot_dim), Some(look.foot_bg), "")
+            style::rgb(&version, Some(if old { (255, 135, 0) } else { look.foot_dim }), Some(look.foot_bg), if old { "b" } else { "" })
         ));
 
         // The cursor rests at the end of what you typed.
